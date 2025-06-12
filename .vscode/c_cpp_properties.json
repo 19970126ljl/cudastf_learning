@@ -1,0 +1,57 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/cccl/libcudacxx/include",
+                "${workspaceFolder}/cccl/cudax/include",
+                "${workspaceFolder}/cccl/thrust/include",
+                "${workspaceFolder}/cccl/cub/include",
+                "${workspaceFolder}/tutorial",
+                "/usr/local/cuda/include",
+                "/usr/local/cuda/targets/x86_64-linux/include",
+                "/usr/include",
+                "/usr/include/c++/11",
+                "/usr/include/x86_64-linux-gnu/c++/11",
+                "/usr/include/c++/*/",
+                "/usr/include/x86_64-linux-gnu/c++/*/"
+            ],
+            "defines": [
+                "__CUDACC__",
+                "__NVCC__",
+                "__CUDA_ARCH__=860",
+                "_CCCL_CUDA_COMPILATION=1",
+                "_CCCL_DEVICE_COMPILATION=1",
+                "_CCCL_HAS_CUDA_COMPILER=1",
+                "LIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE",
+                "__CUDA_API_VERSION_INTERNAL"
+            ],
+            "compilerPath": "/usr/local/cuda/bin/nvcc",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64",
+            "compilerArgs": [
+                "-std=c++17",
+                "-expt-relaxed-constexpr",
+                "--extended-lambda",
+                "-arch=sm_86"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}",
+                    "${workspaceFolder}/cccl/libcudacxx/include",
+                    "${workspaceFolder}/cccl/cudax/include",
+                    "${workspaceFolder}/cccl/thrust/include",
+                    "${workspaceFolder}/cccl/cub/include",
+                    "${workspaceFolder}/tutorial",
+                    "/usr/local/cuda/include",
+                    "/usr/include"
+                ],
+                "limitSymbolsToIncludedHeaders": false,
+                "databaseFilename": "${workspaceFolder}/.vscode/browse.vc.db"
+            }
+        }
+    ],
+    "version": 4
+}

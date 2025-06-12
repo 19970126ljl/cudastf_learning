@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "variant": "cpp",
+        "random": "cpp",
+        "numeric": "cpp",
+        "list": "cpp",
+        "string": "cpp",
+        "functional": "cpp",
+        "type_traits": "cpp",
+        "ratio": "cpp"
+    },
+    "cmake.sourceDirectory": "/root/stf_exp/cccl"
+}

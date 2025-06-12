@@ -69,6 +69,7 @@ int main()
   ctx.host_launch(lX.read(), lY.read())->*[&](auto hX, auto hY) {
     for (size_t ind = 0; ind < hX.extent(0); ind++)
     {
+      printf("hY(%d) = %f, hX(%d) = %f\n", ind, hY(ind), ind, hX(ind));
       // Y should be Y0 + alpha X0
       EXPECT(fabs(hY(ind) - (Y0(ind) + alpha * X0(ind))) < 0.0001);
 

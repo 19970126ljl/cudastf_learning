@@ -1,0 +1,58 @@
+{
+  "data": {
+    "directory": ".opencode"
+  },
+  "providers": {
+    "openai": {
+      "apiKey": "sk-pmodjrgiyktonhaqkewnzcrhgwpygjzarprbkyggmyhnqges",
+      "disabled": false
+    },
+    "anthropic": {
+      "apiKey": "your-anthropic-api-key",
+      "disabled": false
+    },
+    "groq": {
+      "apiKey": "your-groq-api-key",
+      "disabled": false
+    },
+    "openrouter": {
+      "apiKey": "your-openrouter-api-key",
+      "disabled": false
+    }
+  },
+  "agents": {
+    "coder": {
+      "model": "deepseek-ai/DeepSeek-R1",
+      "maxTokens": 5000
+    },
+    "task": {
+      "model": "deepseek-ai/DeepSeek-R1",
+      "maxTokens": 5000
+    },
+    "title": {
+      "model": "deepseek-ai/DeepSeek-R1",
+      "maxTokens": 80
+    }
+  },
+  "shell": {
+    "path": "/bin/bash",
+    "args": ["-l"]
+  },
+  "mcpServers": {
+    "example": {
+      "type": "stdio",
+      "command": "path/to/mcp-server",
+      "env": [],
+      "args": []
+    }
+  },
+  "lsp": {
+    "go": {
+      "disabled": false,
+      "command": "gopls"
+    }
+  },
+  "debug": false,
+  "debugLSP": false,
+  "autoCompact": true
+}
