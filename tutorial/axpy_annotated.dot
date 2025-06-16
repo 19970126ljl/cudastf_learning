@@ -1,7 +1,0 @@
-digraph {
-"NODE_11" [style="filled" fillcolor="red" label="task fence"]
-"NODE_2" -> "NODE_11"
-"NODE_2" [style="filled" fillcolor="white" label="axpy\nX(read)(16) \nY(rw)(16) "]
-// Edge   count : 1
-// Vertex count : 1
-}

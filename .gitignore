@@ -1,4 +1,104 @@
 
+# Auto-coder and actions
 .auto-coder/
 /actions/
+
+# Build artifacts and compiled files
+/build/
+**/build/
+*.o
+*.obj
+*.exe
+*.out
+*.app
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# CUDA compiled files
+*.cubin
+*.fatbin
+*.ptx
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+DartConfiguration.tcl
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Python cache files (if any Python tools are used)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Log files and temporary files
+*.log
+*.tmp
+*.temp
 /output.txt
+*.out
+*.err
+
+# Generated documentation
+docs/_build/
+*.pdf
+*.png
+*.dot
+!README*.md
+!*.md
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Environment and configuration files
+.env
+.env.local
+.env.*.local
+env.sh
+
+# GPU info and system specific files
+gpuinfo.txt
+
+# Test outputs and temporary data
+test_output/
+tmp/
+temp/

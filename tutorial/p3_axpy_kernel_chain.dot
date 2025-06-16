@@ -1,9 +1,0 @@
-digraph {
-"NODE_16" [style="filled" fillcolor="red" label="task fence"]
-"NODE_3" -> "NODE_16"
-"NODE_6" -> "NODE_16"
-"NODE_6" [style="filled" fillcolor="white" label="task 6\n0(read)(16) \n1(rw)(16) "]
-"NODE_3" [style="filled" fillcolor="white" label="task 3\n2(write)(16) "]
-// Edge   count : 2
-// Vertex count : 2
-}
