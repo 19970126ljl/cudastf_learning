@@ -90,10 +90,8 @@ Thumbs.db
 *~
 
 # Environment and configuration files
-.env
 .env.local
 .env.*.local
-env.sh
 
 # GPU info and system specific files
 gpuinfo.txt

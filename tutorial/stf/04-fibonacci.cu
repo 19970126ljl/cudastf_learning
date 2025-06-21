@@ -43,10 +43,12 @@ __global__ void set(slice<int> out, int val)
 
 logical_data<slice<int>> compute_fibo(context& ctx, int n)
 {
-  auto out = ctx.logical_data(shape_of<slice<int>>(1));
+  auto out = ctx.logical_data(shape_of<slice<int>>(1)).set_symbol(std::to_string(n));
   if (n < 2)
   {
-    ctx.task(out.write())->*[=](cudaStream_t s, auto sout) {
+    ctx.task(out.write())
+        .set_symbol("fibo" + std::to_string(n))
+        ->*[=](cudaStream_t s, auto sout) {
       set<<<1, 1, 0, s>>>(sout, n);
     };
   }
@@ -54,19 +56,22 @@ logical_data<slice<int>> compute_fibo(context& ctx, int n)
   {
     auto fib1 = compute_fibo(ctx, n - 1);
     auto fib2 = compute_fibo(ctx, n - 2);
-    ctx.task(fib1.read(), fib2.read(), out.write())->*[=](cudaStream_t s, auto s1, auto s2, auto sout) {
+    ctx.task(fib1.read(), fib2.read(), out.write())
+        .set_symbol("fibo" + std::to_string(n))
+        ->*[=](cudaStream_t s, auto s1, auto s2, auto sout) {
       add<<<1, 1, 0, s>>>(sout, s1, s2);
     };
   }
 
-  return out;
+  return out.set_symbol(std::to_string(n));
 }
 
 int main(int argc, char** argv)
 {
   int n = (argc > 1) ? atoi(argv[1]) : 4;
 
-  context ctx; // = graph_ctx();
+//   context ctx; // = graph_ctx();
+  context ctx = graph_ctx();
   auto result = compute_fibo(ctx, n);
   ctx.host_launch(result.read())->*[&](auto res) {
     EXPECT(res(0) == fibo_ref(n));
