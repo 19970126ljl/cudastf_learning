@@ -100,3 +100,7 @@ gpuinfo.txt
 test_output/
 tmp/
 temp/
+.aider*
+.env
+.env
+.env
