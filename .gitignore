@@ -104,3 +104,5 @@ temp/
 .env
 .env
 .env
+# Ignore VSCode editor files
+.vscode/
