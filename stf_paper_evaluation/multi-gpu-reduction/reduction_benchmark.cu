@@ -117,10 +117,199 @@ void stf_reduce_kernel_launch(context& ctx, T1 lX, T2 lsum) {
     };
 }
 
+void report_results(
+    const std::string& method_name,
+    unsigned long long N,
+    double avg_time,
+    double result,
+    double ref_sum,
+    bool verify_with_cpu,
+    std::ofstream& csv_file
+) {
+    if (verify_with_cpu) {
+        double error = fabs(result - ref_sum);
+        if (error > 1e-6) {
+            std::cerr << "ERROR: " << method_name << " reduction failed for size " << N
+                      << ". Error: " << std::scientific << error << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+    }
+
+    const size_t data_size_bytes = N * sizeof(double);
+    double bandwidth = (data_size_bytes) / (avg_time / 1000.0) / (1024.0 * 1024.0 * 1024.0);
+    double error = verify_with_cpu ? fabs(result - ref_sum) : 0.0;
+
+    std::cout << std::setw(15) << method_name
+              << std::setw(15) << std::fixed << std::setprecision(3) << avg_time
+              << std::setw(15) << std::fixed << std::setprecision(2) << bandwidth
+              << std::setw(20) << std::scientific << error
+              << std::endl;
+    csv_file << N << "," << method_name << "," << avg_time << "," << bandwidth << "," << error << "\n";
+}
+
+// Benchmark CUDA STF
+void benchmark_stf(unsigned long long N, thrust::device_vector<double>& d_X, double ref_sum, bool verify_with_cpu, int num_iterations, std::ofstream& csv_file) {
+    double total_time = 0.0;
+    double result = 0.0;
+    double* d_input_stf = d_X.data().get();
+    CUDA_CHECK(cudaSetDevice(0));
+
+    // Warm-up
+    {
+        context ctx;
+        double sum = 0.0;
+        auto lX = ctx.logical_data(d_input_stf, {N}, data_place::device());
+        auto lsum = ctx.logical_data(&sum, {1});
+        stf_reduce_kernel_launch(ctx, lX, lsum);
+        cudaStream_t stream = ctx.task_fence();
+        cudaStreamSynchronize(stream);
+        ctx.finalize();
+    }
+
+    GPUTimer timer;
+    for (int i = 0; i < num_iterations; i++) {
+        context ctx;
+        double sum = 0.0;
+        auto lX = ctx.logical_data(d_input_stf, {N}, data_place::device());
+        auto lsum = ctx.logical_data(&sum, {1});
+
+        timer.start();
+        stf_reduce_kernel_launch(ctx, lX, lsum);
+        cudaStream_t stream = ctx.task_fence();
+        cudaStreamSynchronize(stream);
+        timer.stop();
+        ctx.finalize();
+        result = sum;
+        total_time += timer.elapsed_milliseconds();
+    }
+
+    double avg_time = total_time / num_iterations;
+    report_results("CUDA STF", N, avg_time, result, ref_sum, verify_with_cpu, csv_file);
+}
+
+// Benchmark CUDA STF parallel_for
+void benchmark_stf_pfor(unsigned long long N, thrust::device_vector<double>& d_X, double ref_sum, bool verify_with_cpu, int num_iterations, std::ofstream& csv_file) {
+    if (N > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
+        std::cout << std::setw(15) << "CUDA STF pfor"
+                  << std::setw(15) << "N/A (skipped)"
+                  << std::setw(15) << "N/A (skipped)"
+                  << std::setw(20) << "N/A (skipped)"
+                  << std::endl;
+        return;
+    }
+
+    double total_time = 0.0;
+    double result = 0.0;
+    double* d_input_stf_pfor = d_X.data().get();
+    CUDA_CHECK(cudaSetDevice(0));
+
+    // Warm-up
+    {
+        context ctx;
+        auto lX = ctx.logical_data(d_input_stf_pfor, {static_cast<size_t>(N)}, data_place::device());
+        auto lsum = ctx.logical_data(shape_of<scalar_view<double>>());
+        ctx.parallel_for(lX.shape(), lX.read(), lsum.reduce(reducer::sum<double>{}))
+            ->*[] __device__(size_t i, auto x, auto& sum) {
+                sum += x(i);
+            };
+        ctx.wait(lsum);
+        ctx.finalize();
+    }
+
+    GPUTimer timer;
+    for (int i = 0; i < num_iterations; i++) {
+        context ctx;
+        auto lX = ctx.logical_data(d_input_stf_pfor, {static_cast<size_t>(N)}, data_place::device());
+        auto lsum = ctx.logical_data(shape_of<scalar_view<double>>());
+
+        timer.start();
+        ctx.parallel_for(lX.shape(), lX.read(), lsum.reduce(reducer::sum<double>{}))
+            ->*[] __device__(size_t i, auto x, auto& sum) {
+                sum += x(i);
+            };
+        CUDA_CHECK(cudaGetLastError());
+        if (N > 1000000000) {
+            cudaStream_t stream = ctx.task_fence();
+            cudaStreamSynchronize(stream);
+            result = ctx.wait(lsum);
+        } else {
+            result = ctx.wait(lsum);
+        }
+        timer.stop();
+        ctx.finalize();
+        total_time += timer.elapsed_milliseconds();
+    }
+
+    double avg_time = total_time / num_iterations;
+    report_results("CUDA STF pfor", N, avg_time, result, ref_sum, verify_with_cpu, csv_file);
+}
+
+// Benchmark CUB
+void benchmark_cub(unsigned long long N, thrust::device_vector<double>& d_X, double ref_sum, bool verify_with_cpu, int num_iterations, std::ofstream& csv_file) {
+    double total_time = 0.0;
+    double result = 0.0;
+    double* d_input_cub = d_X.data().get();
+    double* d_output_cub = nullptr;
+    void* d_temp_storage_cub = nullptr;
+    size_t temp_storage_bytes_cub = 0;
+
+    CUDA_CHECK(cudaSetDevice(0));
+    CUDA_CHECK(cudaMalloc(&d_output_cub, sizeof(double)));
+    
+    // Determine temporary storage requirements
+    cub::DeviceReduce::Sum(d_temp_storage_cub, temp_storage_bytes_cub, d_input_cub, d_output_cub, N);
+    CUDA_CHECK(cudaMalloc(&d_temp_storage_cub, temp_storage_bytes_cub));
+    
+    // Warm-up
+    cub::DeviceReduce::Sum(d_temp_storage_cub, temp_storage_bytes_cub, d_input_cub, d_output_cub, N);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    GPUTimer timer;
+    for (int i = 0; i < num_iterations; i++) {
+        timer.start();
+        cub::DeviceReduce::Sum(d_temp_storage_cub, temp_storage_bytes_cub, d_input_cub, d_output_cub, N);
+        CUDA_CHECK(cudaDeviceSynchronize());
+        timer.stop();
+        total_time += timer.elapsed_milliseconds();
+    }
+
+    CUDA_CHECK(cudaMemcpy(&result, d_output_cub, sizeof(double), cudaMemcpyDeviceToHost));
+    
+    CUDA_CHECK(cudaFree(d_output_cub));
+    CUDA_CHECK(cudaFree(d_temp_storage_cub));
+    
+    double avg_time = total_time / num_iterations;
+    report_results("CUB", N, avg_time, result, ref_sum, verify_with_cpu, csv_file);
+}
+
+// Benchmark Thrust
+void benchmark_thrust(unsigned long long N, thrust::device_vector<double>& d_X, double ref_sum, bool verify_with_cpu, int num_iterations, std::ofstream& csv_file) {
+    double total_time = 0.0;
+    double result = 0.0;
+    CUDA_CHECK(cudaSetDevice(0));
+    
+    // Warm-up
+    result = thrust::reduce(d_X.begin(), d_X.end(), 0.0, thrust::plus<double>());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    GPUTimer timer;
+    for (int i = 0; i < num_iterations; i++) {
+        timer.start();
+        result = thrust::reduce(d_X.begin(), d_X.end(), 0.0, thrust::plus<double>());
+        CUDA_CHECK(cudaDeviceSynchronize());
+        timer.stop();
+        total_time += timer.elapsed_milliseconds();
+    }
+    
+    double avg_time = total_time / num_iterations;
+    report_results("Thrust", N, avg_time, result, ref_sum, verify_with_cpu, csv_file);
+}
+
+
 // Benchmark function
 void benchmark_reduction(unsigned long long N, std::ofstream& csv_file, bool verify_with_cpu = false, int num_iterations = 10) {
-    std::cout << "Benchmarking reduction with " << N << " elements (\" " 
-              << N * sizeof(double) / 1024.0 / 1024.0 << " MB)\"" << std::endl;
+    std::cout << "Benchmarking reduction with " << N << " elements (" 
+              << N * sizeof(double) / 1024.0 / 1024.0 << " MB)" << std::endl;
     std::cout << std::string(80, '-') << std::endl;
     
     // Generate data on the device using Thrust
@@ -148,249 +337,10 @@ void benchmark_reduction(unsigned long long N, std::ofstream& csv_file, bool ver
               << std::endl;
     std::cout << std::string(65, '-') << std::endl;
     
-    
-    
-    // Benchmark CUDA STF
-    {
-        double total_time = 0.0;
-        double result = 0.0;
-        const size_t data_size_bytes = N * sizeof(double);
-
-        // Device pointers for STF (following CUB's pattern)
-        double* d_input_stf = d_X.data().get();
-        double* d_output_stf = nullptr;
-
-        CUDA_CHECK(cudaSetDevice(0)); // Assuming device 0 for STF
-        CUDA_CHECK(cudaMalloc(&d_output_stf, sizeof(double)));
-        
-        // Data is already on device in d_X
-        
-        for (int i = 0; i < num_iterations; i++) {
-            context ctx;
-            double sum = 0.0;
-            
-            // Create logical data from device memory
-            auto lX = ctx.logical_data(d_input_stf, {N}, data_place::device());
-            auto lsum = ctx.logical_data(&sum, {1}); // Keep sum on host for result retrieval
-
-            GPUTimer timer;
-            timer.start();
-            stf_reduce_kernel_launch(ctx, lX, lsum);
-            cudaStream_t stream = ctx.task_fence();
-            cudaStreamSynchronize(stream);
-            timer.stop();
-            ctx.finalize(); // STF finalize synchronizes, so no extra cudaDeviceSynchronize needed here for timing. 
-            result = sum; // Get result after finalize ensures it's available. 
-            total_time += timer.elapsed_milliseconds();
-            
-            // Verify result if CPU verification is enabled
-            if (verify_with_cpu) {
-                double error = fabs(result - ref_sum);
-                if (error > 1e-6) {
-                    std::cerr << "ERROR: CUDA STF reduction failed for size " << N
-                              << ". Error: "
-                              << std::scientific << error << std::endl;
-                    std::exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        // d_input_stf is managed by d_X
-        CUDA_CHECK(cudaFree(d_output_stf));
-        
-        double avg_time = total_time / num_iterations;
-        double bandwidth = (N * sizeof(double)) / (avg_time / 1000.0) / (1024.0 * 1024.0 * 1024.0);
-        double error = verify_with_cpu ? fabs(result - ref_sum) : 0.0;
-        
-        std::cout << std::setw(15) << "CUDA STF"
-                  << std::setw(15) << std::fixed << std::setprecision(3) << avg_time
-                  << std::setw(15) << std::fixed << std::setprecision(2) << bandwidth
-                  << std::setw(20) << std::scientific << error
-                  << std::endl;
-        csv_file << N << ",CUDA STF," << avg_time << "," << bandwidth << "," << error << "\n";
-    }
-
-    // Benchmark CUDA STF parallel_for
-    {
-        // Check if N exceeds the maximum value for int
-        if (N > static_cast<unsigned long long>(std::numeric_limits<int>::max())) {
-            std::cout << std::setw(15) << "CUDA STF pfor"
-                      << std::setw(15) << "N/A (skipped)"
-                      << std::setw(15) << "N/A (skipped)"
-                      << std::setw(20) << "N/A (skipped)"
-                      << std::endl;
-            // Do not log to CSV for skipped tests
-        } else {
-            double total_time = 0.0;
-            double result = 0.0;
-            const size_t data_size_bytes = N * sizeof(double);
-
-            // Device pointers for STF
-            double* d_input_stf_pfor = d_X.data().get();
-
-            CUDA_CHECK(cudaSetDevice(0)); // Assuming device 0 for STF
-            
-            // Data is already on device in d_X
-            
-            for (int i = 0; i < num_iterations; i++) {
-                context ctx;
-                
-                auto lX = ctx.logical_data(d_input_stf_pfor, {static_cast<size_t>(N)}, data_place::device());
-                auto lsum = ctx.logical_data(shape_of<scalar_view<double>>());
-
-                GPUTimer timer;
-                timer.start();
-                
-                ctx.parallel_for(lX.shape(), lX.read(), lsum.reduce(reducer::sum<double>{}))
-                    ->*[] __device__(size_t i, auto x, auto& sum) {
-                        sum += x(i);
-                    };
-
-                // Add CUDA error check after parallel_for
-                CUDA_CHECK(cudaGetLastError());
-                
-                // Try task_fence instead of wait for large datasets
-                if (N > 1000000000) { // For datasets > 1GB
-                    cudaStream_t stream = ctx.task_fence();
-                    cudaStreamSynchronize(stream);
-                    result = ctx.wait(lsum); // Now wait should be fast
-                } else {
-                    result = ctx.wait(lsum);
-                }
-                timer.stop();
-                ctx.finalize();
-                total_time += timer.elapsed_milliseconds();
-                
-                // Verify result if CPU verification is enabled
-                if (verify_with_cpu) {
-                    double error = fabs(result - ref_sum);
-                    if (error > 1e-6) {
-                        std::cerr << "ERROR: CUDA STF pfor reduction failed for size " << N
-                                  << ". Error: "
-                                  << std::scientific << error << std::endl;
-                        std::exit(EXIT_FAILURE);
-                    }
-                }
-            }
-
-            // d_input_stf_pfor is managed by d_X
-            
-            double avg_time = total_time / num_iterations;
-            double bandwidth = (N * sizeof(double)) / (avg_time / 1000.0) / (1024.0 * 1024.0 * 1024.0);
-            double error = verify_with_cpu ? fabs(result - ref_sum) : 0.0;
-            
-            std::cout << std::setw(15) << "CUDA STF pfor"
-                      << std::setw(15) << std::fixed << std::setprecision(3) << avg_time
-                      << std::setw(15) << std::fixed << std::setprecision(2) << bandwidth
-                      << std::setw(20) << std::scientific << error
-                      << std::endl;
-            csv_file << N << ",CUDA STF pfor," << avg_time << "," << bandwidth << "," << error << "\n";
-        }
-    }
-    
-    // Benchmark CUB
-    {
-        double total_time = 0.0;
-        double result = 0.0;
-        const size_t data_size_bytes = N * sizeof(double);
-
-        // Device pointers for CUB
-        double* d_input_cub = d_X.data().get();
-        double* d_output_cub = nullptr;
-        void* d_temp_storage_cub = nullptr;
-        size_t temp_storage_bytes_cub = 0;
-
-        CUDA_CHECK(cudaSetDevice(0)); // Assuming device 0 for CUB
-        CUDA_CHECK(cudaMalloc(&d_output_cub, sizeof(double)));
-        
-        // Data is already on device in d_X
-
-        // Get temporary storage size
-        cub::DeviceReduce::Sum(d_temp_storage_cub, temp_storage_bytes_cub, d_input_cub, d_output_cub, N);
-        CUDA_CHECK(cudaMalloc(&d_temp_storage_cub, temp_storage_bytes_cub));
-        
-        for (int i = 0; i < num_iterations; i++) {
-            GPUTimer timer;
-            timer.start();
-            cub::DeviceReduce::Sum(d_temp_storage_cub, temp_storage_bytes_cub, d_input_cub, d_output_cub, N);
-            CUDA_CHECK(cudaDeviceSynchronize());
-            timer.stop();
-            total_time += timer.elapsed_milliseconds();
-        }
-
-        // Copy result back after all timed iterations
-        CUDA_CHECK(cudaMemcpy(&result, d_output_cub, sizeof(double), cudaMemcpyDeviceToHost));
-        
-        // Verify result if CPU verification is enabled
-        if (verify_with_cpu) {
-            double error = fabs(result - ref_sum);
-            if (error > 1e-6) {
-                std::cerr << "ERROR: CUB reduction failed for size " << N
-                          << ". Error: "
-                          << std::scientific << error << std::endl;
-                std::exit(EXIT_FAILURE);
-            }
-        }
-
-        // d_input_cub is managed by d_X
-        CUDA_CHECK(cudaFree(d_output_cub));
-        CUDA_CHECK(cudaFree(d_temp_storage_cub));
-        
-        double avg_time = total_time / num_iterations;
-        double bandwidth = (data_size_bytes) / (avg_time / 1000.0) / (1024.0 * 1024.0 * 1024.0);
-        double error = verify_with_cpu ? fabs(result - ref_sum) : 0.0;
-        
-        std::cout << std::setw(15) << "CUB"
-                  << std::setw(15) << std::fixed << std::setprecision(3) << avg_time
-                  << std::setw(15) << std::fixed << std::setprecision(2) << bandwidth
-                  << std::setw(20) << std::scientific << error
-                  << std::endl;
-        csv_file << N << ",CUB," << avg_time << "," << bandwidth << "," << error << "\n";
-    }
-    
-    // Benchmark Thrust
-    {
-        double total_time = 0.0;
-        double result = 0.0;
-        const size_t data_size_bytes = N * sizeof(double);
-
-        // Data is already in a thrust device_vector d_X
-
-        CUDA_CHECK(cudaSetDevice(0)); // Assuming device 0 for Thrust
-        
-        for (int i = 0; i < num_iterations; i++) {
-            GPUTimer timer;
-            timer.start();
-            result = thrust::reduce(d_X.begin(), d_X.end(), 0.0, thrust::plus<double>());
-            CUDA_CHECK(cudaDeviceSynchronize());
-            timer.stop();
-            total_time += timer.elapsed_milliseconds();
-            
-            // Verify result if CPU verification is enabled
-            if (verify_with_cpu) {
-                double error = fabs(result - ref_sum);
-                if (error > 1e-6) {
-                    std::cerr << "ERROR: Thrust reduction failed for size " << N
-                              << ". Error: "
-                              << std::scientific << error << std::endl;
-                    std::exit(EXIT_FAILURE);
-                }
-            }
-        }
-
-        // No need to free anything, d_X is managed by its scope
-        
-        double avg_time = total_time / num_iterations;
-        double bandwidth = (data_size_bytes) / (avg_time / 1000.0) / (1024.0 * 1024.0 * 1024.0);
-        double error = verify_with_cpu ? fabs(result - ref_sum) : 0.0;
-        
-        std::cout << std::setw(15) << "Thrust"
-                  << std::setw(15) << std::fixed << std::setprecision(3) << avg_time
-                  << std::setw(15) << std::fixed << std::setprecision(2) << bandwidth
-                  << std::setw(20) << std::scientific << error
-                  << std::endl;
-        csv_file << N << ",Thrust," << avg_time << "," << bandwidth << "," << error << "\n";
-    }
+    benchmark_stf(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    benchmark_stf_pfor(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    benchmark_cub(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    benchmark_thrust(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     
     std::cout << std::string(80, '-') << std::endl;
 }
