@@ -6,6 +6,14 @@ NVCC = /opt/nvidia/hpc_sdk/Linux_x86_64/25.5/compilers/bin/nvcc
 # Compiler flags
 NVCCFLAGS = -std=c++17 -expt-relaxed-constexpr --extended-lambda -arch=native -lcuda -lineinfo
 
+# Debug flag (disable by default, enable with make DEBUG=1)
+DEBUG ?= 0
+ifeq ($(DEBUG), 1)
+    NVCCFLAGS += -g -G -O0
+else
+    NVCCFLAGS += -O3
+endif
+
 # Linker flags
 LDFLAGS = -L/opt/nvidia/hpc_sdk/Linux_x86_64/25.5/cuda/12.9/targets/x86_64-linux/lib
 LIBS =
