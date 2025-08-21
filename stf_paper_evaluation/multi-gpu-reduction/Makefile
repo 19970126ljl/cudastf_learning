@@ -1,10 +1,14 @@
 # Makefile for the reduction benchmark
 
 # Compiler
-NVCC = nvcc
+NVCC = /opt/nvidia/hpc_sdk/Linux_x86_64/25.5/compilers/bin/nvcc
 
 # Compiler flags
 NVCCFLAGS = -std=c++17 -expt-relaxed-constexpr --extended-lambda -arch=native -lcuda -lineinfo
+
+# Linker flags
+LDFLAGS = -L/opt/nvidia/hpc_sdk/Linux_x86_64/25.5/cuda/12.9/targets/x86_64-linux/lib
+LIBS =
 
 # Include paths
 INCLUDES = -I../../cccl/libcudacxx/include \
@@ -24,9 +28,9 @@ all: $(TARGET)
 # Rule to build the executable
 $(TARGET): $(SOURCE)
 	@echo "Compiling $(TARGET)..."
-	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $(SOURCE) -o $(TARGET)
+	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $(SOURCE) -o $(TARGET) $(LDFLAGS) $(LIBS)
 	@echo "Compilation successful!"
-	@echo "Run the benchmark with: ./$(TARGET)"
+	@echo "Run the benchmark with: $./$(TARGET)"
 
 # Clean target
 clean:

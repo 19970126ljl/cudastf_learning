@@ -13,6 +13,7 @@
 #include <thrust/transform.h>
 #include <thrust/iterator/counting_iterator.h>
 #include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -21,6 +22,9 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <limits>
+#include <string>
+#include <algorithm>
+#include <cctype>
 
 using namespace cuda::experimental::stf;
 
@@ -46,13 +50,15 @@ public:
         cudaEventDestroy(stop_);
     }
     
-    void start() {
+    void start(const char* name) {
+        nvtxRangePushA(name);
         cudaEventRecord(start_, 0);
     }
     
     void stop() {
         cudaEventRecord(stop_, 0);
         cudaEventSynchronize(stop_);
+        nvtxRangePop();
     }
     
     float elapsed_milliseconds() {
@@ -90,7 +96,7 @@ double cpu_reduce(const std::vector<double>& data) {
 template<typename T1, typename T2>
 void stf_reduce_kernel_launch(context& ctx, T1 lX, T2 lsum) {
     auto where = exec_place::device(0);
-    auto spec = par(con<128>(hw_scope::thread));
+    auto spec = par(con<1024>(hw_scope::thread));
     
     ctx.launch(spec, where, lX.read(), lsum.rw())->*[] _CCCL_DEVICE(auto th, auto x, auto sum) {
         // Each thread computes the sum of elements assigned to it
@@ -173,7 +179,7 @@ void benchmark_stf(unsigned long long N, thrust::device_vector<double>& d_X, dou
         auto lX = ctx.logical_data(d_input_stf, {N}, data_place::device());
         auto lsum = ctx.logical_data(&sum, {1});
 
-        timer.start();
+        timer.start("CUDA STF");
         stf_reduce_kernel_launch(ctx, lX, lsum);
         cudaStream_t stream = ctx.task_fence();
         cudaStreamSynchronize(stream);
@@ -222,7 +228,7 @@ void benchmark_stf_pfor(unsigned long long N, thrust::device_vector<double>& d_X
         auto lX = ctx.logical_data(d_input_stf_pfor, {static_cast<size_t>(N)}, data_place::device());
         auto lsum = ctx.logical_data(shape_of<scalar_view<double>>());
 
-        timer.start();
+        timer.start("CUDA STF pfor");
         ctx.parallel_for(lX.shape(), lX.read(), lsum.reduce(reducer::sum<double>{}))
             ->*[] __device__(size_t i, auto x, auto& sum) {
                 sum += x(i);
@@ -266,7 +272,7 @@ void benchmark_cub(unsigned long long N, thrust::device_vector<double>& d_X, dou
 
     GPUTimer timer;
     for (int i = 0; i < num_iterations; i++) {
-        timer.start();
+        timer.start("CUB");
         cub::DeviceReduce::Sum(d_temp_storage_cub, temp_storage_bytes_cub, d_input_cub, d_output_cub, N);
         CUDA_CHECK(cudaDeviceSynchronize());
         timer.stop();
@@ -294,7 +300,7 @@ void benchmark_thrust(unsigned long long N, thrust::device_vector<double>& d_X, 
 
     GPUTimer timer;
     for (int i = 0; i < num_iterations; i++) {
-        timer.start();
+        timer.start("Thrust");
         result = thrust::reduce(d_X.begin(), d_X.end(), 0.0, thrust::plus<double>());
         CUDA_CHECK(cudaDeviceSynchronize());
         timer.stop();
@@ -306,8 +312,9 @@ void benchmark_thrust(unsigned long long N, thrust::device_vector<double>& d_X, 
 }
 
 
+
 // Benchmark function
-void benchmark_reduction(unsigned long long N, std::ofstream& csv_file, bool verify_with_cpu = false, int num_iterations = 10) {
+void benchmark_reduction(unsigned long long N, std::ofstream& csv_file, const std::string& model, bool verify_with_cpu = false, int num_iterations = 10) {
     std::cout << "Benchmarking reduction with " << N << " elements (" 
               << N * sizeof(double) / 1024.0 / 1024.0 << " MB)" << std::endl;
     std::cout << std::string(80, '-') << std::endl;
@@ -337,27 +344,87 @@ void benchmark_reduction(unsigned long long N, std::ofstream& csv_file, bool ver
               << std::endl;
     std::cout << std::string(65, '-') << std::endl;
     
-    benchmark_stf(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
-    benchmark_stf_pfor(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
-    benchmark_cub(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
-    benchmark_thrust(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    if (model == "all" || model == "stf") {
+        benchmark_stf(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    }
+    if (model == "all" || model == "stf_pfor") {
+        benchmark_stf_pfor(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    }
+    if (model == "all" || model == "cub") {
+        benchmark_cub(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    }
+    if (model == "all" || model == "thrust") {
+        benchmark_thrust(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    }
     
     std::cout << std::string(80, '-') << std::endl;
 }
 
+unsigned long long parse_size(std::string s) {
+    s.erase(std::remove_if(s.begin(), s.end(), isspace), s.end());
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+
+    unsigned long long multiplier = 1;
+    size_t pos = std::string::npos;
+
+    if ((pos = s.find("gb")) != std::string::npos) {
+        multiplier = 1ULL * 1024 * 1024 * 1024;
+        s = s.substr(0, pos);
+    } else if ((pos = s.find("g")) != std::string::npos) {
+        multiplier = 1ULL * 1024 * 1024 * 1024;
+        s = s.substr(0, pos);
+    } else if ((pos = s.find("mb")) != std::string::npos) {
+        multiplier = 1024 * 1024;
+        s = s.substr(0, pos);
+    } else if ((pos = s.find("m")) != std::string::npos) {
+        multiplier = 1024 * 1024;
+        s = s.substr(0, pos);
+    } else if ((pos = s.find("kb")) != std::string::npos) {
+        multiplier = 1024;
+        s = s.substr(0, pos);
+    } else if ((pos = s.find("k")) != std::string::npos) {
+        multiplier = 1024;
+        s = s.substr(0, pos);
+    }
+
+    unsigned long long value = std::stoull(s);
+    // The user specifies size in bytes, so we convert to number of elements
+    return (value * multiplier) / sizeof(double);
+}
+
 int main(int argc, char** argv) {
     bool verify_with_cpu = false;
+    std::string model_to_run = "all";
+    unsigned long long problem_size_arg = 0;
+    int num_iterations_arg = 10;
     int opt;
     
     // Parse command line arguments
-    while ((opt = getopt(argc, argv, "c")) != -1) {
+    while ((opt = getopt(argc, argv, "cm:n:i:")) != -1) {
         switch (opt) {
             case 'c':
                 verify_with_cpu = true;
                 break;
+            case 'm':
+                model_to_run = optarg;
+                break;
+            case 'n':
+                try {
+                    problem_size_arg = parse_size(optarg);
+                } catch (const std::invalid_argument& ia) {
+                    std::cerr << "Invalid argument for -n: " << optarg << std::endl;
+                    return 1;
+                }
+                break;
+            case 'i':
+                num_iterations_arg = std::stoi(optarg);
+                break;
             default:
-                std::cerr << "Usage: " << argv[0] << " [-c]" << std::endl;
+                std::cerr << "Usage: " << argv[0] << " [-c] [-m <model>] [-n <size>] [-i <iterations>]" << std::endl;
                 std::cerr << "  -c: Enable CPU reduction verification" << std::endl;
+                std::cerr << "  -m: Benchmark a specific model (stf, stf_pfor, cub, thrust, all). Default: all" << std::endl;
+                std::cerr << "  -n: Problem size (e.g., 1024, 512MB, 2GB). Default: a range of sizes" << std::endl;
+                std::cerr << "  -i: Number of iterations. Default: 10" << std::endl;
                 return 1;
         }
     }
@@ -389,20 +456,25 @@ int main(int argc, char** argv) {
     csv_file << "N,Method,Time_ms,GB_s,Error\n";
     
     // Test with different problem sizes
-    std::vector<unsigned long long> problem_sizes = {
-        1024 * 1024,           // 8 MB
-        16 * 1024 * 1024,      // 128 MB
-        128 * 1024 * 1024,     // 1 GB
-        256 * 1024 * 1024,     // 2 GB
-        512 * 1024 * 1024,     // 4 GB
-        1ULL * 1024 * 1024 * 1024,    // 8 GB
-        2ULL * 1024 * 1024 * 1024,    // 16 GB
-        4ULL * 1024 * 1024 * 1024,    // 32 GB
-        8ULL * 1024 * 1024 * 1024     // 64 GB
-    };
+    std::vector<unsigned long long> problem_sizes;
+    if (problem_size_arg > 0) {
+        problem_sizes.push_back(problem_size_arg);
+    } else {
+        problem_sizes = {
+            1024 * 1024,           // 8 MB
+            16 * 1024 * 1024,      // 128 MB
+            128 * 1024 * 1024,     // 1 GB
+            256 * 1024 * 1024,     // 2 GB
+            512 * 1024 * 1024,     // 4 GB
+            1ULL * 1024 * 1024 * 1024,    // 8 GB
+            2ULL * 1024 * 1024 * 1024,    // 16 GB
+            4ULL * 1024 * 1024 * 1024,    // 32 GB
+            8ULL * 1024 * 1024 * 1024     // 64 GB
+        };
+    }
     
     for (unsigned long long N : problem_sizes) {
-        benchmark_reduction(N, csv_file, verify_with_cpu, 10);
+        benchmark_reduction(N, csv_file, model_to_run, verify_with_cpu, num_iterations_arg);
         std::cout << std::endl;
     }
 
@@ -410,3 +482,5 @@ int main(int argc, char** argv) {
     
     return 0;
 }
+
+
