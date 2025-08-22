@@ -97,7 +97,7 @@ double cpu_reduce(const std::vector<double>& data) {
 template<typename T1, typename T2>
 void stf_reduce_kernel_launch(context& ctx, T1 lX, T2 lsum) {
     auto where = exec_place::device(0);
-    auto spec = par(con<256>(hw_scope::thread));
+    auto spec = par<4320>(con<256>(hw_scope::thread));
     
     ctx.launch(spec, where, lX.read(), lsum.rw())->*[] _CCCL_DEVICE(auto th, auto x, auto sum) {
         // Each thread computes the sum of elements assigned to it
@@ -109,37 +109,39 @@ void stf_reduce_kernel_launch(context& ctx, T1 lX, T2 lsum) {
         // Get the sizes from the original shape
         auto sizes = original_shape.get_sizes();
         
-        // Calculate the vectorized size (divide last dimension by 4)
-        size_t last_dim = sizes[sizes.size() - 1];
-        size_t vectorized_last_dim = last_dim / 4;
-        
+        // Calculate the vectorized size
+        constexpr size_t vectorized_size = 4;
+        // Get the last dimension's size directly
+        size_t last_dim = original_shape.extent(original_shape.rank() - 1);
+        size_t vectorized_last_dim = last_dim / vectorized_size;
+            
         // Create a new box shape with the modified last dimension
-        // This is device-compatible and avoids the host-only constructor
         box<1> vectorized_shape(vectorized_last_dim);
+        // Second loop: Handle remaining elements (if last_dim is not divisible by 4)
+        size_t remaining_start = vectorized_last_dim * vectorized_size;
+        if (remaining_start < last_dim) {
+            box<1> remaining_shape(last_dim - remaining_start);
+            for (auto i : th.apply_partition(remaining_shape)) {
+                local_sum += x(remaining_start + i);
+            }
+        }
+        
         
         // First loop: Process elements in vectorized chunks (no divergence)
         for (auto i : th.apply_partition(vectorized_shape)) {
             // Calculate the original index
-            size_t original_idx = i * 4;
+            size_t original_idx = i * vectorized_size;
             
             // Use reinterpret_cast for vectorized loading
             const double4* vec_ptr = reinterpret_cast<const double4*>(&x(original_idx));
             double4 vec = *vec_ptr;
             
             // Sum all four components
-            local_sum += vec.x;
-            local_sum += vec.y;
-            local_sum += vec.z;
-            local_sum += vec.w;
-        }
-        
-        // Second loop: Handle remaining elements (if last_dim is not divisible by 4)
-        size_t remaining_start = vectorized_last_dim * 4;
-        if (remaining_start < last_dim) {
-            box<1> remaining_shape(last_dim - remaining_start);
-            for (auto i : th.apply_partition(remaining_shape)) {
-                local_sum += x(remaining_start + i);
-            }
+            // local_sum += vec.x;
+            // local_sum += vec.y;
+            // local_sum += vec.z;
+            // local_sum += vec.w;
+            local_sum += vec.x + vec.y + vec.z + vec.w;
         }
         
         auto ti = th.inner();
@@ -158,34 +160,6 @@ void stf_reduce_kernel_launch(context& ctx, T1 lX, T2 lsum) {
             atomicAdd(&sum(0), block_sum[0]);
         }
     };
-}
-// An improved version of the STF reduction kernel using shared memory to optimize data loading.
-// To use this, call stf_reduce_kernel_launch_v2 in your benchmark instead of the original function.
-template<typename T1, typename T2>
-void stf_reduce_kernel_launch_v2(context& ctx, T1 lX, T2 lsum) {
-    auto where = exec_place::device(0);
-    #define GRID_SIZE 4320
-    #define BLOCK_SIZE 256
-    auto spec = par<GRID_SIZE>(con<BLOCK_SIZE>(hw_scope::thread));
-    ctx.launch(spec, where, lX.read(), lsum.rw())->*[] _CCCL_DEVICE(auto th, auto x, auto sum) {
-        // Each thread computes the sum of elements assigned to it
-        double local_sum = 0.0;
-        for (auto ind : th.apply_partition(shape(x)))
-        {
-            local_sum += x(ind);
-        }
-
-        using BlockReduce = cub::BlockReduce<double, th.static_width(1)>;
-        __shared__ typename BlockReduce::TempStorage temp_storage;
-
-        double block_sum = BlockReduce(temp_storage).Sum(local_sum);
-        if (th.inner().rank() == 0)
-        {
-            atomicAdd(&sum(0), block_sum);
-        }
-    };
-    #undef GRID_SIZE
-    #undef BLOCK_SIZE
 }
 
 void report_results(
@@ -259,45 +233,6 @@ void benchmark_stf(unsigned long long N, thrust::device_vector<double>& d_X, dou
 }
 
 
-// Benchmark CUDA STF v2
-void benchmark_stf_v2(unsigned long long N, thrust::device_vector<double>& d_X, double ref_sum, bool verify_with_cpu, int num_iterations, std::ofstream& csv_file) {
-    double total_time = 0.0;
-    double result = 0.0;
-    double* d_input_stf = d_X.data().get();
-    CUDA_CHECK(cudaSetDevice(0));
-
-    // Warm-up
-    {
-        context ctx;
-        double sum = 0.0;
-        auto lX = ctx.logical_data(d_input_stf, {N}, data_place::device());
-        auto lsum = ctx.logical_data(&sum, {1});
-        stf_reduce_kernel_launch_v2(ctx, lX, lsum);
-        cudaStream_t stream = ctx.task_fence();
-        cudaStreamSynchronize(stream);
-        ctx.finalize();
-    }
-
-    GPUTimer timer;
-    for (int i = 0; i < num_iterations; i++) {
-        context ctx;
-        double sum = 0.0;
-        auto lX = ctx.logical_data(d_input_stf, {N}, data_place::device());
-        auto lsum = ctx.logical_data(&sum, {1});
-
-        timer.start("CUDA STF v2");
-        stf_reduce_kernel_launch_v2(ctx, lX, lsum);
-        cudaStream_t stream = ctx.task_fence();
-        cudaStreamSynchronize(stream);
-        timer.stop();
-        ctx.finalize();
-        result = sum;
-        total_time += timer.elapsed_milliseconds();
-    }
-
-    double avg_time = total_time / num_iterations;
-    report_results("CUDA STF v2", N, avg_time, result, ref_sum, verify_with_cpu, csv_file);
-}
 
 // Benchmark CUDA STF parallel_for
 void benchmark_stf_pfor(unsigned long long N, thrust::device_vector<double>& d_X, double ref_sum, bool verify_with_cpu, int num_iterations, std::ofstream& csv_file) {
@@ -453,10 +388,7 @@ void benchmark_reduction(unsigned long long N, std::ofstream& csv_file, const st
     if (model == "all" || model == "stf") {
         benchmark_stf(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     }
-    if (model == "all" || model == "stf_v2") {
-        benchmark_stf_v2(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
-    }
-    if (model == "all" || model == "stf_pfor") {
+        if (model == "all" || model == "stf_pfor") {
         benchmark_stf_pfor(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     }
     if (model == "all" || model == "cub") {
@@ -531,7 +463,7 @@ int main(int argc, char** argv) {
             default:
                 std::cerr << "Usage: " << argv[0] << " [-c] [-m <model>] [-n <size>] [-i <iterations>]" << std::endl;
                 std::cerr << "  -c: Enable CPU reduction verification" << std::endl;
-                std::cerr << "  -m: Benchmark a specific model (stf, stf_v2, stf_pfor, cub, thrust, all). Default: all" << std::endl;
+                std::cerr << "  -m: Benchmark a specific model (stf, stf_pfor, cub, thrust, all). Default: all" << std::endl;
                 std::cerr << "  -n: Problem size (e.g., 1024, 512MB, 2GB). Default: a range of sizes" << std::endl;
                 std::cerr << "  -i: Number of iterations. Default: 10" << std::endl;
                 return 1;
