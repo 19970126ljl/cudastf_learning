@@ -44,6 +44,12 @@ $(TARGET): $(SOURCE)
 clean:
 	@echo "Cleaning..."
 	rm -f $(TARGET)
+	rm -f reduction_benchmark_v1 reduction_benchmark_v2
+	rm -f *.sass *.ptx *.cubin *.ii *_intermediate
+	rm -rf intermediate_v1/ intermediate_v2/
+	rm -f *_disasm.txt *_sass*.txt
+	rm -f *.csv *.png
+	rm -f perf_out/
 	@echo "Clean complete."
 
 # Run target
