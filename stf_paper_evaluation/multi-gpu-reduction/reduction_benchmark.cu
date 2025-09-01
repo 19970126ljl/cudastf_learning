@@ -27,6 +27,7 @@
 #include "kernels/stf_pfor.cuh"
 #include "kernels/cub.cuh"
 #include "kernels/thrust.cuh"
+#include "kernels/stf_launch_wide_load.cuh"
 
 // Data generation functor for Thrust
 struct sin_functor
@@ -89,6 +90,9 @@ void benchmark_reduction(unsigned long long N, std::ofstream& csv_file, const st
     }
     if (model == "all" || model == "thrust") {
         benchmark_thrust(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    }
+    if (model == "all" || model == "stf_wide_load") {
+        benchmark_stf_launch_wide_load(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     }
     
     std::cout << std::string(80, '-') << std::endl;
@@ -156,7 +160,7 @@ int main(int argc, char** argv) {
             default:
                 std::cerr << "Usage: " << argv[0] << " [-c] [-m <model>] [-n <size>] [-i <iterations>]" << std::endl;
                 std::cerr << "  -c: Enable CPU reduction verification" << std::endl;
-                std::cerr << "  -m: Benchmark a specific model (stf, stf_pfor, cub, thrust, all). Default: all" << std::endl;
+                std::cerr << "  -m: Benchmark a specific model (stf, stf_pfor, stf_wide_load, cub, thrust, all). Default: all" << std::endl;
                 std::cerr << "  -n: Problem size (e.g., 1024, 512MB, 2GB). Default: a range of sizes" << std::endl;
                 std::cerr << "  -i: Number of iterations. Default: 10" << std::endl;
                 return 1;
