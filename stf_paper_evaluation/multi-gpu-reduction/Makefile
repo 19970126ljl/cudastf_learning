@@ -40,15 +40,27 @@ INCLUDES = -I../../cccl/libcudacxx/include \
 
 # Target executable
 TARGET = reduction_benchmark
+TARGET_MGPU = reduction_benchmark_mgpu
 
 # Source file
 SOURCE = reduction_benchmark.cu
+SOURCE_MGPU = reduction_benchmark_mgpu.cu
 MAXREG_KERNEL_OBJ = stf_launch_maxregcount.o
 MAXREG_KERNEL_SRC = kernels/stf_launch_maxregcount.cu
 
 
 # Default target
 all: $(TARGET)
+
+# Multi-GPU target
+mgpu: $(TARGET_MGPU)
+
+# Rule to build the multi-GPU executable
+$(TARGET_MGPU): $(SOURCE_MGPU)
+	@echo "Compiling multi-GPU benchmark $(TARGET_MGPU)..."
+	$(NVCC) $(NVCCFLAGS) $(KEEP_FLAGS) $(INCLUDES) $(SOURCE_MGPU) -o $(TARGET_MGPU) $(LDFLAGS) $(LIBS)
+	@echo "Multi-GPU compilation successful!"
+	@echo "Run the multi-GPU benchmark with: ./$(TARGET_MGPU)"
 
 # Rule to build the maxregcount kernel object
 $(MAXREG_KERNEL_OBJ): $(MAXREG_KERNEL_SRC)
@@ -70,14 +82,15 @@ keep:
 # Clean target
 clean:
 	@echo "Cleaning..."
-	rm -f $(TARGET) $(MAXREG_KERNEL_OBJ)
-	rm -f reduction_benchmark_v1 reduction_benchmark_v2
-	rm -f *.sass *.ptx *.cubin *.ii *_intermediate
-	rm -rf intermediate_v1/ intermediate_v2/
-	rm -f *_disasm.txt *_sass*.txt
-	rm -f *.csv *.png
-	rm -rf perf_out/
-	rm -rf keep_dir/
+	rm -f $(TARGET) $(TARGET_MGPU) $(MAXREG_KERNEL_OBJ)
+	rm -f ./reduction_benchmark_v1 reduction_benchmark_v2
+	rm -f ./*.sass *.ptx *.cubin *.ii *_intermediate
+	rm -rf ./intermediate_v1/ intermediate_v2/
+	rm -f ./*_disasm.txt *_sass*.txt
+	rm -f ./*.csv *.png
+	rm -rf ./perf_out/
+	rm -rf ./keep_dir/
+	rm -rf ./*.dot ./*.png ./*.pdf
 	@echo "Clean complete."
 
 # Run target
@@ -85,5 +98,10 @@ run: $(TARGET)
 	@echo "Running $(TARGET)..."
 	./$(TARGET)
 
+# Run multi-GPU target
+run-mgpu: $(TARGET_MGPU)
+	@echo "Running multi-GPU benchmark $(TARGET_MGPU)..."
+	./$(TARGET_MGPU)
+
 # Phony targets
-.PHONY: all clean run keep
+.PHONY: all clean run keep mgpu run-mgpu
