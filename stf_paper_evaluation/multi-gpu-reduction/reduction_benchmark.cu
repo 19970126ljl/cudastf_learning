@@ -96,11 +96,17 @@ void benchmark_reduction(unsigned long long N, std::ofstream& csv_file, const st
     if (model == "all" || model == "stf_maxregcount") {
         benchmark_stf_launch_maxregcount(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     }
+    if (model == "all" || model == "stf_maxregcount_cub") {
+        benchmark_stf_launch_maxregcount_cub(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    }
     if (model == "all" || model == "stf_native") {
         benchmark_stf_launch_wide_load_native(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     }
     if (model == "all" || model == "stf_grid_stride") {
         benchmark_stf_launch_grid_stride(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    }
+    if (model == "all" || model == "stf_grid_stride_cub") {
+        benchmark_stf_launch_grid_stride_cub(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     }
     if (model == "all" || model == "stf_grid_stride_11") {
         benchmark_stf_launch_grid_stride_11(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
@@ -152,9 +158,10 @@ unsigned long long parse_size(std::string s) {
 
 int main(int argc, char** argv) {
     bool verify_with_cpu = false;
-    std::string model_to_run = "all";
+    std::vector<std::string> models_to_run;
     unsigned long long problem_size_arg = 0;
     int num_iterations_arg = 10;
+    
     int opt;
     
     // Parse command line arguments
@@ -164,7 +171,7 @@ int main(int argc, char** argv) {
                 verify_with_cpu = true;
                 break;
             case 'm':
-                model_to_run = optarg;
+                models_to_run.push_back(optarg);
                 break;
             case 'n':
                 try {
@@ -180,11 +187,16 @@ int main(int argc, char** argv) {
             default:
                 std::cerr << "Usage: " << argv[0] << " [-c] [-m <model>] [-n <size>] [-i <iterations>]" << std::endl;
                 std::cerr << "  -c: Enable CPU reduction verification" << std::endl;
-                std::cerr << "  -m: Benchmark a specific model (stf, stf_pfor, stf_wide_load, stf_maxregcount, stf_native, stf_grid_stride, stf_grid_stride_11, stf_grid_stride_12, thrust, cub, all). Default: all" << std::endl;
+                std::cerr << "  -m: Benchmark specific model(s). Can be used multiple times. (stf, stf_pfor, stf_wide_load, stf_maxregcount, stf_maxregcount_cub, stf_native, stf_grid_stride, stf_grid_stride_cub, stf_grid_stride_11, stf_grid_stride_12, thrust, cub, all). Default: all" << std::endl;
                 std::cerr << "  -n: Problem size (e.g., 1024, 512MB, 2GB). Default: a range of sizes" << std::endl;
                 std::cerr << "  -i: Number of iterations. Default: 10" << std::endl;
                 return 1;
         }
+    }
+    
+    // If no models specified, default to all
+    if (models_to_run.empty()) {
+        models_to_run.push_back("all");
     }
     
     if (verify_with_cpu) {
@@ -232,7 +244,9 @@ int main(int argc, char** argv) {
     }
     
     for (unsigned long long N : problem_sizes) {
-        benchmark_reduction(N, csv_file, model_to_run, verify_with_cpu, num_iterations_arg);
+        for (const std::string& model : models_to_run) {
+            benchmark_reduction(N, csv_file, model, verify_with_cpu, num_iterations_arg);
+        }
         std::cout << std::endl;
     }
 
