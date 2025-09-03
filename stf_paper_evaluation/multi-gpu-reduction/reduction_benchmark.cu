@@ -33,6 +33,7 @@
 #include "kernels/stf_launch_grid_stride.cuh"
 #include "kernels/stf_launch_grid_stride_11.cuh"
 #include "kernels/stf_launch_grid_stride_12.cuh"
+#include "kernels/stf_launch_two_stage.cuh"
 
 // Data generation functor for Thrust
 struct sin_functor
@@ -108,11 +109,17 @@ void benchmark_reduction(unsigned long long N, std::ofstream& csv_file, const st
     if (model == "all" || model == "stf_grid_stride_cub") {
         benchmark_stf_launch_grid_stride_cub(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     }
+    if (model == "all" || model == "stf_grid_stride_cub_double2") {
+        benchmark_stf_launch_grid_stride_cub_double2(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    }
     if (model == "all" || model == "stf_grid_stride_11") {
         benchmark_stf_launch_grid_stride_11(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     }
     if (model == "all" || model == "stf_grid_stride_12") {
         benchmark_stf_launch_grid_stride_12(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
+    }
+    if (model == "all" || model == "stf_two_stage") {
+        benchmark_stf_launch_two_stage_cub(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
     }
     if (model == "all" || model == "thrust") {
         benchmark_thrust(N, d_X, ref_sum, verify_with_cpu, num_iterations, csv_file);
@@ -187,7 +194,7 @@ int main(int argc, char** argv) {
             default:
                 std::cerr << "Usage: " << argv[0] << " [-c] [-m <model>] [-n <size>] [-i <iterations>]" << std::endl;
                 std::cerr << "  -c: Enable CPU reduction verification" << std::endl;
-                std::cerr << "  -m: Benchmark specific model(s). Can be used multiple times. (stf, stf_pfor, stf_wide_load, stf_maxregcount, stf_maxregcount_cub, stf_native, stf_grid_stride, stf_grid_stride_cub, stf_grid_stride_11, stf_grid_stride_12, thrust, cub, all). Default: all" << std::endl;
+                std::cerr << "  -m: Benchmark specific model(s). Can be used multiple times. (stf, stf_pfor, stf_wide_load, stf_maxregcount, stf_maxregcount_cub, stf_native, stf_grid_stride, stf_grid_stride_cub, stf_grid_stride_cub_double2, stf_grid_stride_11, stf_grid_stride_12, stf_two_stage, thrust, cub, all). Default: all" << std::endl;
                 std::cerr << "  -n: Problem size (e.g., 1024, 512MB, 2GB). Default: a range of sizes" << std::endl;
                 std::cerr << "  -i: Number of iterations. Default: 10" << std::endl;
                 return 1;

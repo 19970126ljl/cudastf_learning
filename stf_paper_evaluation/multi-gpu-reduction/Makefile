@@ -76,7 +76,7 @@ clean:
 	rm -rf intermediate_v1/ intermediate_v2/
 	rm -f *_disasm.txt *_sass*.txt
 	rm -f *.csv *.png
-	rm -f perf_out/
+	rm -rf perf_out/
 	rm -rf keep_dir/
 	@echo "Clean complete."
 
